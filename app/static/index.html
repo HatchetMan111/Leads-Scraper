@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LeadScraper + Sales Team — Consulting DACH</title>
+<style>
+:root{--bg:#0f141b;--card:#1a2230;--line:#2b3445;--txt:#e8edf5;--mut:#9aa7bd;--acc:#4da3ff;--ok:#3ecf8e;--warn:#ffb020;--bad:#ff5d5d}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--txt);font:15px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+header{padding:18px 22px;border-bottom:1px solid var(--line);display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+header h1{font-size:19px;margin:0}header small{color:var(--mut)}
+nav{display:flex;gap:8px;padding:12px 22px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+nav button{background:var(--card);color:var(--txt);border:1px solid var(--line);border-radius:9px;padding:8px 14px;cursor:pointer}
+nav button.active{background:var(--acc);border-color:var(--acc);color:#06121f;font-weight:700}
+main{padding:18px 22px;max-width:1180px;margin:0 auto}
+section{display:none}section.active{display:block}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin:12px 0}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.kpi{background:#111927;border:1px solid var(--line);border-radius:10px;padding:12px;text-align:center}
+.kpi b{font-size:26px;display:block}
+table{width:100%;border-collapse:collapse;font-size:14px}th,td{padding:8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+th{color:var(--mut);font-weight:600}.pill{display:inline-block;padding:2px 10px;border-radius:20px;font-weight:700;font-size:13px}
+.A{background:#123f2b;color:var(--ok);border:1px solid var(--ok)}.B{background:#3d2f0e;color:var(--warn);border:1px solid var(--warn)}
+.C{background:#2a2f3a;color:var(--mut);border:1px solid var(--mut)}.X{background:#3d1414;color:var(--bad);border:1px solid var(--bad)}
+input,select,textarea{background:#0d1320;color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:8px;width:100%}
+textarea{min-height:60px}.row{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px}
+.btn{background:var(--acc);color:#06121f;border:0;border-radius:9px;padding:9px 16px;font-weight:700;cursor:pointer}
+.btn.ghost{background:transparent;color:var(--txt);border:1px solid var(--line)}
+.mut{color:var(--mut);font-size:13px}
+.kanban{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px}
+.col{background:#111927;border:1px solid var(--line);border-radius:10px;padding:10px;min-height:120px}
+.col h3{margin:0 0 8px;font-size:13px;color:var(--mut);text-transform:uppercase}
+.lead{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px;margin:6px 0;font-size:13px;cursor:pointer}
+pre{background:#0d1320;padding:12px;border-radius:8px;overflow:auto;font-size:12.5px;max-height:320px}
+#err{background:#3d1414;border:1px solid var(--bad);border-radius:10px;padding:12px;margin:10px 0;display:none;white-space:pre-wrap;font-size:13px}
+</style>
+</head>
+<body>
+<header>
+<h1>🎯 LeadScraper + Sales Team</h1>
+<small id="icpLabel">ICP: lädt …</small>
+<small>· Discovery → Qualification → Enrichment · lokal, keine Cloud</small>
+</header>
+<nav>
+<button data-t="dash" class="active">📊 Dashboard</button>
+<button data-t="leads">🏢 Leads</button>
+<button data-t="pipe">📦 Sales-Pipeline</button>
+<button data-t="icp">🧭 ICP &amp; Nische</button>
+<button data-t="out">✉️ Outreach</button>
+</nav>
+<main>
+<div id="err"></div>
+
+<section id="t-dash" class="active">
+<div class="kpis" id="kpis"></div>
+<div class="card"><h3>Top-Leads (Score)</h3><div id="top"></div></div>
+<div class="card"><h3>Pipeline nach Stage</h3><div id="bystage"></div></div>
+<div class="card">
+<h3>CSV-Discovery-Import <span class="mut">(Name,Website,Stadt,Mitarbeiter — Header optional)</span></h3>
+<textarea id="csv" placeholder="Muster Consulting GmbH,https://muster.de,München,14"></textarea>
+<p><button class="btn" onclick="importCSV()">Importieren</button>
+<button class="btn ghost" onclick="scoreAll()">Alle neu bewerten (aktives ICP-Profil)</button></p>
+<p class="mut" id="impMsg"></p>
+</div>
+</section>
+
+<section id="t-leads">
+<div class="card">
+<div class="row">
+<div><input id="fq" placeholder="Suche Name/Stadt/Website …" oninput="loadLeads()"></div>
+<div><select id="fk" onchange="loadLeads()"><option value="">Alle Klassen</option><option>A</option><option>B</option><option>C</option><option>X</option></select></div>
+<div><select id="fs" onchange="loadLeads()"><option value="">Alle Stages</option></select></div>
+<div><button class="btn ghost" onclick="openForm()">+ Neuer Lead</button></div>
+</div>
+</div>
+<div class="card"><div id="tbl"></div></div>
+<div class="card" id="formCard" style="display:none"><h3 id="formTitle">Lead</h3>
+<div class="row">
+<div><label>Name*</label><input id="f_name"></div>
+<div><label>Website</label><input id="f_website" placeholder="https://…"></div>
+<div><label>Stadt</label><input id="f_stadt"></div>
+<div><label>Mitarbeiter</label><input id="f_mitarbeiter" type="number" value="0"></div>
+<div><label>Inhabergeführt</label><select id="f_inh"><option value="0">nein/unbekannt</option><option value="1">ja</option></select></div>
+<div><label>Beratungsart</label><select id="f_bart"><option value="">—</option><option value="strategie">Strategie/Management</option><option value="it_digital">IT/Digitalisierung</option><option value="ops">Organisation/Prozess</option></select></div>
+</div>
+<h4>Signale S1–S7 (Hook-Priorität!)</h4>
+<div class="row">
+<div><label><input type="checkbox" id="f_s1" style="width:auto"> S1 KI-Stelle offen</label><input id="f_s1t" placeholder="Stellentitel"><input id="f_s1d" placeholder="Datum JJJJ-MM-TT"><input id="f_s1u" placeholder="URL Anzeige"></div>
+<div><label> S2 Portfolio</label><select id="f_s2"><option value="unbekannt">unbekannt</option><option value="kein_ki">kein KI-Angebot (Gap!)</option><option value="buzzwords">nur Buzzwords (Gap!)</option><option value="aufbau">im Aufbau</option><option value="starke_ki_praxis">starke KI-Praxis (Ausschluss E4!)</option></select>
+<label style="margin-top:8px"><input type="checkbox" id="f_s3" style="width:auto"> S3 Partner/Zert.</label><input id="f_s3d" placeholder="z. B. Microsoft Partner"><input id="f_s3dt" placeholder="Datum JJJJ-MM-TT"></div>
+<div><label><input type="checkbox" id="f_s4" style="width:auto"> S4 Event/Talk</label><input id="f_s4d" placeholder="z. B. Webinar Digitalisierung"><input id="f_s4dt" placeholder="Datum JJJJ-MM-TT">
+<label style="margin-top:8px"><input type="checkbox" id="f_s5" style="width:auto"> S5 Wachstum/Hiring</label><input id="f_s5d" placeholder="Detail"></div>
+<div><label><input type="checkbox" id="f_s6" style="width:auto"> S6 Budget-Timing</label><br><label><input type="checkbox" id="f_s7" style="width:auto"> S7 Regulatorik (AI Act)</label>
+<label style="margin-top:8px">Ausschluss-Grund (E1–E7, leer = keiner)</label><input id="f_ex" placeholder="z. B. E3: Recruiting-Firma"><label>Pipeline-Stage</label><select id="f_stage"></select></div>
+</div>
+<label>Enrichment-Notizen (nur A/B tief anreichern!)</label><textarea id="f_not"></textarea>
+<p><button class="btn" onclick="saveLead()">Speichern &amp; bewerten</button>
+<button class="btn ghost" onclick="document.getElementById('formCard').style.display='none'">Abbrechen</button></p>
+<p class="mut" id="scoreMsg"></p>
+</div>
+</section>
+
+<section id="t-pipe"><div class="card"><h3>Sales-Pipeline — Klick = Lead öffnen, Button = weiterziehen</h3><div class="kanban" id="kanban"></div></div></section>
+
+<section id="t-icp">
+<div class="card"><h3>Aktives ICP-Profil</h3><p class="mut" id="icpMeta"></p><h4>Signale (Hook-Priorität)</h4><div id="sigTbl"></div>
+<h4>Ausschlusskriterien</h4><div id="exTbl"></div></div>
+<div class="card"><h3>5 Fragen zur Nische (Framework)</h3><div id="niche"></div></div>
+<div class="card"><h3>ICP-YAML (Quelle, schreibgeschützt)</h3><pre id="yaml"></pre></div>
+</section>
+
+<section id="t-out">
+<div class="card"><h3>Outreach-Regel</h3>
+<p><b>„Ein Brief kostet mehr als diese Recherche.“</b> → Nur <span class="pill A">A</span>/<span class="pill B">B</span> tief anreichern &amp; anschreiben. <span class="pill C">C</span> ehrlich parken, nie erfinden.</p>
+<p class="mut">Kernsatz: Ein ICP ist erst nützlich, wenn du ihn in Merkmale übersetzt, die du von außen beobachten kannst.</p></div>
+<div class="card"><h3>Personalisierungs-Hooks (aus Top-A-Leads)</h3><div id="hooks"></div></div>
+</section>
+</main>
+<script>
+const STAGES=["neu","qualifiziert","angereichert","kontaktiert","termin","kunde","abgelehnt"];
+let EDIT_ID=null, ICP=null;
+function showErr(t){const e=document.getElementById('err');e.style.display='block';e.textContent=t;}
+async function api(m,p,b){const r=await fetch(p,{method:m,headers:{'Content-Type':'application/json'},body:b?JSON.stringify(b):undefined});const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error((j.error||r.status)+' '+(j.trace||''));return j;}
+document.querySelectorAll('nav button').forEach(x=>x.onclick=()=>{document.querySelectorAll('nav button').forEach(y=>y.classList.remove('active'));x.classList.add('active');document.querySelectorAll('section').forEach(s=>s.classList.remove('active'));document.getElementById('t-'+x.dataset.t).classList.add('active');});
+document.getElementById('fs').innerHTML='<option value="">Alle Stages</option>'+STAGES.map(s=>`<option>${s}</option>`).join('');
+document.getElementById('f_stage').innerHTML=STAGES.map(s=>`<option>${s}</option>`).join('');
+async function init(){try{const ic=await api('GET','/api/icp');ICP=ic.profile;document.getElementById('icpLabel').textContent='ICP: '+(ICP.icp_name||'?')+' v'+(ICP.version||'')+' · '+ (ICP.region||'');
+document.getElementById('icpMeta').textContent=(ICP.zielgruppe||{}).beschreibung+' · '+STAGES.length+' Stages · '+((ICP.signale||[]).length)+' Signale';
+document.getElementById('sigTbl').innerHTML='<table><tr><th>ID</th><th>Signal</th><th>Prio</th><th>Gew.</th><th>Typ</th></tr>'+(ICP.signale||[]).map(s=>`<tr><td><b>${s.id}</b></td><td>${s.name}<br><span class=mut>${s.beschreibung||''}</span></td><td>${s.prioritaet}</td><td>${s.gewicht}</td><td>${s.typ}</td></tr>`).join('')+'</table>';
+document.getElementById('exTbl').innerHTML='<table>'+((ICP.ausschlusskriterien||[]).map(e=>`<tr><td><b>${e.id}</b></td><td>${e.regel}</td></tr>`).join(''))+'</table>';
+document.getElementById('yaml').textContent=ic.yaml||'(kein YAML gefunden)';
+const nf=(ICP.nische_framework_5_fragen||[]);document.getElementById('niche').innerHTML=nf.length?nf.map(n=>`<p><b>${n.id} · ${n.frage}</b><br><span class=mut>Test: ${n.test||''}</span></p>`).join(''):'<p class=mut>Siehe icp/*.yaml — nische_framework_5_fragen.</p>';
+}catch(e){showErr('ICP laden fehlgeschlagen:\n'+e.message);}loadStats();loadLeads();}
+async function loadStats(){try{const s=await api('GET','/api/stats');document.getElementById('kpis').innerHTML=`<div class=kpi><b>${s.total}</b>Leads</div>`+['A','B','C','X'].map(k=>`<div class=kpi><b>${s.by_klasse[k]||0}</b>Klasse ${k}</div>`).join('');
+document.getElementById('top').innerHTML=(s.top||[]).map(t=>`<div> <span class="pill ${t.klasse}">${t.klasse} ${t.score}</span> <b>${t.name}</b> <span class=mut>${t.stage}</span></div>`).join('')||'<span class=mut>noch keine Leads</span>';
+document.getElementById('bystage').innerHTML=STAGES.map(st=>`<div>${st}: <b>${s.by_stage[st]||0}</b></div>`).join('');
+const all=await api('GET','/api/leads?klasse=A');document.getElementById('hooks').innerHTML=(all.leads||[]).slice(0,10).map(l=>`<p>🎯 <b>${l.name}</b> — ${l.hook||'<span class=mut>kein Hook</span>'} <span class=mut>(${l.website||''})</span></p>`).join('')||'<span class=mut>noch keine A-Leads</span>';
+const kb=document.getElementById('kanban');const leads=await api('GET','/api/leads');kb.innerHTML=STAGES.map(st=>{const items=(leads.leads||[]).filter(l=>l.stage===st);return `<div class=col><h3>${st} (${items.length})</h3>`+items.map(l=>`<div class=lead onclick="openForm(${l.id})"><span class="pill ${l.klasse}">${l.klasse}</span> <b>${l.name}</b><br><span class=mut>${l.stadt||''} · ${l.score} P</span><br><button class=btn ghost style="padding:2px 8px;margin-top:4px" onclick="event.stopPropagation();moveStage(${l.id},'${st}')">→ weiter</button></div>`).join('')+`</div>`;}).join('');
+}catch(e){showErr('Stats fehlgeschlagen:\n'+e.message);}}
+async function loadLeads(){try{const q=document.getElementById('fq').value,k=document.getElementById('fk').value,s=document.getElementById('fs').value;const d=await api('GET',`/api/leads?q=${encodeURIComponent(q)}&klasse=${k}&stage=${s}`);
+document.getElementById('tbl').innerHTML=`<p class=mut>${d.count} Leads (ICP: ${(ICP||{}).icp_name||'?'})</p><table><tr><th>Lead</th><th>MA</th><th>Signale</th><th>Klasse</th><th>Stage</th><th></th></tr>`+d.leads.map(l=>`<tr><td><b>${l.name}</b><br><span class=mut>${l.website||''} · ${l.stadt||''} · ${l.beratungsart||''}</span><br><span class=mut>Hook: ${l.hook||'—'}</span></td><td>${l.mitarbeiter||'?'}</td><td><span class=mut>${[l.s1_job?'S1 ': '',l.s3_partner?'S3 ': '',l.s4_event?'S4 ': '',l.s5_wachstum?'S5 ': ''].join('')||'—'}</span></td><td><span class="pill ${l.klasse}">${l.klasse} ${l.score}</span></td><td>${l.stage}</td><td><button class="btn ghost" onclick="openForm(${l.id})">Öffnen</button> <button class="btn ghost" onclick="delLead(${l.id})">✕</button></td></tr>`).join('')+'</table>';}catch(e){showErr('Leads laden fehlgeschlagen:\n'+e.message);}}
+async function openForm(id){EDIT_ID=id||null;document.getElementById('formCard').style.display='block';document.getElementById('formTitle').textContent=id?('Lead #'+id):'Neuer Lead';document.getElementById('scoreMsg').textContent='';
+if(!id){['f_name','f_website','f_stadt','f_s1t','f_s1d','f_s1u','f_s3d','f_s3dt','f_s4d','f_s4dt','f_s5d','f_ex','f_not'].forEach(x=>document.getElementById(x).value='');document.getElementById('f_mitarbeiter').value=0;window.scrollTo(0,document.body.scrollHeight);return;}
+try{const l=await api('GET','/api/leads/'+id);const S=(x,v)=>document.getElementById(x).value=v||'';S('f_name',l.name);S('f_website',l.website);S('f_stadt',l.stadt);document.getElementById('f_mitarbeiter').value=l.mitarbeiter||0;document.getElementById('f_inh').value=l.inhabergefuehrt?1:0;S('f_bart',l.beratungsart);document.getElementById('f_s1').checked=!!l.s1_job;S('f_s1t',l.s1_titel);S('f_s1d',l.s1_datum);S('f_s1u',l.s1_url);S('f_s2',l.s2_portfolio);document.getElementById('f_s3').checked=!!l.s3_partner;S('f_s3d',l.s3_detail);S('f_s3dt',l.s3_datum);document.getElementById('f_s4').checked=!!l.s4_event;S('f_s4d',l.s4_detail);S('f_s4dt',l.s4_datum);document.getElementById('f_s5').checked=!!l.s5_wachstum;S('f_s5d',l.s5_detail);document.getElementById('f_s6').checked=!!l.s6_timing;document.getElementById('f_s7').checked=!!l.s7_regulierung;S('f_ex',l.excluded_reason);S('f_stage',l.stage);S('f_not',l.notizen);window.scrollTo(0,document.body.scrollHeight);}catch(e){showErr('Lead öffnen fehlgeschlagen:\n'+e.message);}}
+async function saveLead(){const g=x=>document.getElementById(x).value;const c=x=>document.getElementById(x).checked?1:0;const b={name:g('f_name'),website:g('f_website'),stadt:g('f_stadt'),mitarbeiter:parseInt(g('f_mitarbeiter'))||0,inhabergefuehrt:c('f_inh'),beratungsart:g('f_bart'),s1_job:c('f_s1'),s1_titel:g('f_s1t'),s1_datum:g('f_s1d'),s1_url:g('f_s1u'),s2_portfolio:g('f_s2'),s3_partner:c('f_s3'),s3_detail:g('f_s3d'),s3_datum:g('f_s3dt'),s4_event:c('f_s4'),s4_detail:g('f_s4d'),s4_datum:g('f_s4dt'),s5_wachstum:c('f_s5'),s5_detail:g('f_s5d'),s6_timing:c('f_s6'),s7_regulierung:c('f_s7'),excluded_reason:g('f_ex'),stage:g('f_stage'),notizen:g('f_not')};
+try{const r=EDIT_ID?await api('PUT','/api/leads/'+EDIT_ID,b):await api('POST','/api/leads',b);if(r.error)throw new Error(r.error);document.getElementById('scoreMsg').textContent=`Bewertet: Klasse ${r.klasse} · ${r.score} Punkte — ${r.begruendung||''}`;EDIT_ID=r.id;loadLeads();loadStats();}catch(e){showErr('Speichern fehlgeschlagen:\n'+e.message);}}
+async function delLead(id){if(!confirm('Lead #'+id+' löschen?'))return;await api('DELETE','/api/leads/'+id);loadLeads();loadStats();}
+async function moveStage(id,cur){const i=STAGES.indexOf(cur);const nx=STAGES[Math.min(i+1,STAGES.length-1)];const l=await api('GET','/api/leads/'+id);l.stage=nx;await api('PUT','/api/leads/'+id,l);loadLeads();loadStats();}
+async function importCSV(){try{const r=await api('POST','/api/import-csv',{csv:document.getElementById('csv').value});document.getElementById('impMsg').textContent=`Importiert: ${r.imported}`+(r.errors&&r.errors.length?(' · Fehler: '+r.errors.slice(0,3).join(' | ')):'');loadLeads();loadStats();}catch(e){showErr('Import fehlgeschlagen:\n'+e.message);}}
+async function scoreAll(){try{const r=await api('POST','/api/score-all',{});alert('Neu bewertet: '+r.rescored+' (Profil '+r.icp+')');loadLeads();loadStats();}catch(e){showErr('Scoring fehlgeschlagen:\n'+e.message);}}
+init();
+</script>
+</body>
+</html>

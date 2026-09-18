@@ -1,0 +1,184 @@
+# =============================================================================
+# ICP-Profil: Consulting-Firmen DACH (austauschbar, Code-unabhängig)
+# Die Recherche-Engine (app/app.py) kennt nur das SCHEMA (icp/SCHEMA.md).
+# Alle Zielgruppen-Details stehen HIER. Für eine neue Nische: Datei kopieren,
+# anpassen, in der App/ENV als ICP_FILE setzen — kein Code-Umbau nötig.
+# Architektur: Discovery (Google Places & Co.) -> Qualification (dieses Profil)
+#   -> Deep Research / Enrichment (nur für A/B-Leads).
+# Google Places dient NUR der Lead-Discovery. Ob ein Lead passt, entscheidet
+# dieses Profil in der Qualification.
+# =============================================================================
+icp_name: consulting-dach
+version: "1.0"
+region: DACH (DE, AT, CH)
+sprache: de
+
+zielgruppe:
+  beschreibung: Inhaber- bzw. eigentümergeführte Consulting-Firmen mit klarer Spezialisierung
+  mitarbeiter_min: 8
+  mitarbeiter_max: 25
+  inhabergefuehrt_pflicht: true
+  entscheidungswege: kurz, direkter Zugang zu entscheidungsbefugter Person
+
+consulting_arten:
+  - strategie: Strategieberatung / Management Consulting (Markteintritt, Restrukturierung, M&A, Neuausrichtung)
+  - it_digital: IT- & Digitalisierungsberatung (Softwareeinführung, Cloud, Digitalisierung, Cybersecurity, Automatisierung)
+  - ops: Organisations- & Prozessberatung / Operations (Abläufe, Strukturen, Supply Chain, Produktion, Administration)
+
+buyer_hypothese: >
+  Consulting-Firmen verkaufen Kompetenz und Vertrauen und müssen gegenüber
+  ihren eigenen Kunden fachlich aktuell und technologisch anschlussfähig wirken.
+  Eine sichtbare KI-Lücke ist nicht nur ein Effizienzproblem, sondern ein
+  Glaubwürdigkeits- und Statusproblem: Wenn Kunden zunehmend nach KI fragen,
+  kann eine Beratung es sich schwer leisten, sichtbar hinterherzuhinken.
+  Gesuchter Pain: "Wir müssen KI-Kompetenz aufbauen, um vor Kunden relevant
+  zu bleiben" — nicht nur "Wir könnten mit KI Zeit sparen".
+
+# Signale nach Hook-Priorität sortiert. Je konkreter, aktueller und datierter,
+# desto besser für individuelle Ansprache.
+signale:
+  - id: S1
+    name: Offene KI-Stellenanzeigen
+    prioritaet: 1
+    gewicht: 40
+    typ: datiert
+    beschreibung: Firma sucht selbst AI-/KI-/Automation-Kompetenz — stärkstes Kaufsignal.
+    beobachtbar:
+      - Karriereseite
+      - LinkedIn Jobs
+      - Stepstone / Indeed
+    felder: [titel, veroeffentlichungsdatum, url]
+    deutung: Konkrete aktuelle Anzeige schlägt allgemeine Aussage wie "KI ist uns wichtig".
+
+  - id: S2
+    name: KI-Lücke im Leistungsportfolio
+    prioritaet: 2
+    gewicht: 20
+    typ: merkmal
+    beschreibung: Leistungs-/Angebotsseite ohne konkretes KI-Angebot oder nur Buzzwords ohne Leistung.
+    bewertung:
+      kein_ki_angebot: möglicher Kompetenz-Gap (interessant)
+      nur_buzzwords: ebenfalls interessant
+      etablierte_ki_praxis: niedrige Priorität / möglicher Ausschluss
+    hinweis: Firma im Aufbau einer KI-Praxis + KI-Stellen kann trotzdem hochinteressant sein.
+
+  - id: S3
+    name: Partner- & Zertifizierungsstatus
+    prioritaet: 3
+    gewicht: 10
+    typ: datiert_oder_merkmal
+    beschreibung: Sichtbare Partnerschaften/Zertifizierungen (Microsoft, SAP, Salesforce, ISO 27001, TISAX).
+    deutung: Zeigt Professionalität, Investitionsbereitschaft, wiederkehrende Fristen/Erneuerungszyklen.
+
+  - id: S4
+    name: Talks, Events & Webinare
+    prioritaet: 4
+    gewicht: 15
+    typ: datiert
+    beschreibung: Angekündigte oder kürzlich stattgefundene Vorträge, Events, Webinare.
+    deutung: Datierte Auftritte erzeugen Deadlines (z. B. Talk in 3 Wochen > allgemeines "Innovation").
+
+  - id: S5
+    name: Wachstum
+    prioritaet: 5
+    gewicht: 10
+    typ: merkmal
+    beschreibung: Teamgröße, offene Stellen, erkennbare Hiring-Wellen.
+    deutung: Wachstum erzeugt Onboarding-/Wissens-/Prozess-Probleme und Bedarf an Systemen.
+
+  - id: S6
+    name: Budget-Timing
+    prioritaet: 6
+    gewicht: 3
+    typ: verstaerker
+    beschreibung: Phase, in der Budgets genutzt/geplant/vorgezogen werden (z. B. Richtung Jahresende).
+    deutung: Verstärkt passende Leads, macht schlechte nicht gut.
+
+  - id: S7
+    name: Regulatorischer Druck
+    prioritaet: 7
+    gewicht: 2
+    typ: verstaerker
+    beschreibung: Anforderungen an KI-Kompetenz / verantwortungsvollen Einsatz (z. B. EU AI Act).
+    deutung: Nur guter Hook, wenn wirklich zur Firma und Nutzung passt.
+
+# A/B/C-Bewertungslogik. Grundprinzip: Datierte Ereignisse schlagen allgemeine
+# Eigenschaften. Beweise recherchieren, keine Personalisierung erfinden.
+bewertung:
+  A:
+    label: Konkretes, datiertes Kaufsignal
+    beschreibung: Aktuelles Ereignis / klarer Anlass mit Handlungs- oder Kaufbereitschaft.
+    trigger_mindestens_eins:
+      - S1 mit Titel + Datum + URL
+      - S4 mit Event-Datum (±6 Wochen)
+      - S3 neu (Datum + Nachweis)
+      - S5 konkrete Einstellungs-/Wachstumswelle mit Datum
+    score_range: [80, 100]
+  B:
+    label: Passendes Merkmal ohne konkreten Zeitpunkt
+    beschreibung: Passt grundsätzlich in den ICP, aber kein datierter Trigger.
+    beispiele:
+      - 8-25 Mitarbeitende, inhabergeführt, passende Beratungsart, KI-Gap ohne Datum
+    score_range: [50, 79]
+  C:
+    label: Keine individuelle Evidenz gefunden
+    beschreibung: Passt evtl. grob, aber kein belastbares individuelles Signal.
+    regel: Ein ehrliches C ist besser als ein erfundenes A.
+    score_range: [0, 49]
+
+ausschlusskriterien:
+  - id: E1
+    regel: Weniger als ca. 5 Mitarbeitende
+  - id: E2
+    regel: Falsche Branche (kein Consulting im Kern)
+  - id: E3
+    regel: Recruiting-Firma oder Agentur, nur als "Consulting" einsortiert (als Fehlklassifikation markieren, nicht still löschen)
+  - id: E4
+    regel: Bereits klar etablierte, starke eigene KI-Praxis
+  - id: E5
+    regel: Keine eigene Website
+  - id: E6
+    regel: Unternehmen nicht eindeutig identifizierbar
+  - id: E7
+    regel: Offensichtlich inaktiv
+
+oekonomie: >
+  "Ein Brief kostet mehr als diese Recherche." Die Recherche ist der günstige
+  Filter vor dem teuren Kanal (Brief, hochwertige Personalisierung, manuelle
+  Ansprache, tiefes Enrichment). Reihenfolge: Qualifizieren -> priorisieren ->
+  tief anreichern -> ansprechen. Nicht umgekehrt.
+
+nische_framework_5_fragen:
+  - id: N1
+    frage: Haben sie ein Problem, das gerade wirklich weh tut?
+    test: Geben sie heute schon Geld oder viel Zeit dafür aus?
+    beispiel_pos: Zahnarztpraxis verliert täglich Anrufe/Termine.
+    beispiel_neg: Kleines Café findet Chatbot spannend, hat aber kaum Anfragen.
+  - id: N2
+    frage: Haben sie genug Kaufkraft?
+    test: Kaufen sie heute bereits in ähnlicher Preisklasse?
+    beispiel_pos: Logistikunternehmen (50 MA) kauft Beratung für mehrere Tausend Euro.
+    beispiel_neg: Solo-Selbstständiger mit 200-EUR-Budget für 3.000-EUR-Angebot.
+  - id: N3
+    frage: Kannst du die Zielgruppe einfach finden und gezielt ansprechen?
+    test: 3-5 sichtbare Merkmale (Branche, Größe, Titel, Software, Stellen, Verzeichnisse)?
+    beispiel_pos: Steuerkanzleien 20+ MA mit offenen Stellen und identifizierbarer GF.
+    beispiel_neg: '"Unternehmen, die offen für KI sind" (von außen kaum erkennbar).'
+  - id: N4
+    frage: Wächst dieser Markt?
+    test: Trends, Technologie, Regulierung, Konjunktur verstärken den Bedarf?
+    beispiel_pos: KI-Einführungsberatung wächst mit Nutzung und Anforderungen.
+    beispiel_neg: Optimierung klassischer Videotheken schrumpft.
+  - id: N5
+    frage: Welche Zielgruppe kannst DU besonders gut bedienen?
+    test: Erfahrung, Ergebnisse, Referenzen, Branchenwissen, Kontakte vorhanden?
+    hinweis: Diese Frage kommt eigentlich zuerst — bei bekannten Märkten starten, dann N1-N4 prüfen.
+
+outreach_hinweise:
+  kernsatz_video: Ein ICP ist erst dann wirklich nützlich, wenn du ihn in Merkmale übersetzen kannst, die du von außen beobachten und recherchieren kannst.
+  reihenfolge_video:
+    - 5-Kriterien-Framework für gute Nische zeigen
+    - Konkreten Consulting-ICP daraus ableiten
+    - ICP in 7 recherchierbare Signale übersetzen
+    - A/B/C-System für Bewertung zeigen
+    - Ausschlusskriterien + "erst qualifizieren, dann teuer anreichern" erklären
