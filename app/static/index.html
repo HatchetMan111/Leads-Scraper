@@ -26,6 +26,7 @@ input,select,textarea{background:#0d1320;color:var(--txt);border:1px solid var(-
 textarea{min-height:60px}.row{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px}
 .btn{background:var(--acc);color:#06121f;border:0;border-radius:9px;padding:9px 16px;font-weight:700;cursor:pointer}
 .btn.ghost{background:transparent;color:var(--txt);border:1px solid var(--line)}
+.btn:disabled{opacity:.5;cursor:wait}
 .mut{color:var(--mut);font-size:13px}
 .kanban{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px}
 .col{background:#111927;border:1px solid var(--line);border-radius:10px;padding:10px;min-height:120px}
@@ -33,20 +34,29 @@ textarea{min-height:60px}.row{display:grid;grid-template-columns:repeat(auto-fit
 .lead{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px;margin:6px 0;font-size:13px;cursor:pointer}
 pre{background:#0d1320;padding:12px;border-radius:8px;overflow:auto;font-size:12.5px;max-height:320px}
 #err{background:#3d1414;border:1px solid var(--bad);border-radius:10px;padding:12px;margin:10px 0;display:none;white-space:pre-wrap;font-size:13px}
+.badge{display:inline-block;padding:1px 8px;border-radius:12px;font-size:12px;border:1px solid var(--warn);color:var(--warn)}
+.badge.ok{border-color:var(--ok);color:var(--ok)}
+.modelrow{display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line);font-size:13px}
+.modelrow b{flex:0 0 auto}.modelrow .mid{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.spin{display:inline-block;animation:rot 1s linear infinite}@keyframes rot{to{transform:rotate(360deg)}}
+.aiBox{background:#0d1320;border:1px solid var(--acc);border-radius:8px;padding:12px;margin:10px 0;font-size:14px}
+.aiBox h4{margin:0 0 6px;color:var(--acc)}
 </style>
 </head>
 <body>
 <header>
 <h1>🎯 LeadScraper + Sales Team</h1>
 <small id="icpLabel">ICP: lädt …</small>
-<small>· Discovery → Qualification → Enrichment · lokal, keine Cloud</small>
+<small id="kiLabel">· KI: prüfe …</small>
 </header>
 <nav>
 <button data-t="dash" class="active">📊 Dashboard</button>
+<button data-t="disco">🔍 KI-Discovery</button>
 <button data-t="leads">🏢 Leads</button>
 <button data-t="pipe">📦 Sales-Pipeline</button>
 <button data-t="icp">🧭 ICP &amp; Nische</button>
 <button data-t="out">✉️ Outreach</button>
+<button data-t="set">⚙️ Einstellungen</button>
 </nav>
 <main>
 <div id="err"></div>
@@ -61,6 +71,20 @@ pre{background:#0d1320;padding:12px;border-radius:8px;overflow:auto;font-size:12
 <p><button class="btn" onclick="importCSV()">Importieren</button>
 <button class="btn ghost" onclick="scoreAll()">Alle neu bewerten (aktives ICP-Profil)</button></p>
 <p class="mut" id="impMsg"></p>
+</div>
+</section>
+
+<section id="t-disco">
+<div class="card"><h3>🔍 KI-Lead-Discovery (OpenRouter)</h3>
+<p class="mut">Beschreibe die Zielgruppe → die KI liefert Firmenkandidaten <b>plus konkrete Suchaufträge</b> zur Verifikation. KI-Treffer landen als <span class="badge">unverifiziert</span> — erst prüfen, dann übernehmen. Ohne Key geht hier nichts (siehe Einstellungen).</p>
+<div class="row">
+<div><label>Zielgruppe / Nische*</label><input id="d_nische" placeholder="z. B. inhabergeführte IT-Beratungen 10–30 MA in Bayern"></div>
+<div><label>Region</label><input id="d_region" value="DACH"></div>
+<div><label>Anzahl (1–30)</label><input id="d_anz" type="number" value="10" min="1" max="30"></div>
+<div><label>Modell</label><select id="d_model"></select></div>
+</div>
+<p><button class="btn" id="d_btn" onclick="discover()">Suchen starten</button></p>
+<div id="d_out"></div>
 </div>
 </section>
 
@@ -91,12 +115,20 @@ pre{background:#0d1320;padding:12px;border-radius:8px;overflow:auto;font-size:12
 <div><label><input type="checkbox" id="f_s4" style="width:auto"> S4 Event/Talk</label><input id="f_s4d" placeholder="z. B. Webinar Digitalisierung"><input id="f_s4dt" placeholder="Datum JJJJ-MM-TT">
 <label style="margin-top:8px"><input type="checkbox" id="f_s5" style="width:auto"> S5 Wachstum/Hiring</label><input id="f_s5d" placeholder="Detail"></div>
 <div><label><input type="checkbox" id="f_s6" style="width:auto"> S6 Budget-Timing</label><br><label><input type="checkbox" id="f_s7" style="width:auto"> S7 Regulatorik (AI Act)</label>
-<label style="margin-top:8px">Ausschluss-Grund (E1–E7, leer = keiner)</label><input id="f_ex" placeholder="z. B. E3: Recruiting-Firma"><label>Pipeline-Stage</label><select id="f_stage"></select></div>
+<label style="margin-top:8px">Ausschluss-Grund (E1–E7, leer = keiner)</label><input id="f_ex" placeholder="z. B. E3: Recruiting-Firma"><label>Pipeline-Stage</label><select id="f_stage"></select>
+<label style="margin-top:8px"><input type="checkbox" id="f_ver" style="width:auto" checked> Verifiziert (KI-Treffer erst nach Prüfung anhaken)</label></div>
 </div>
 <label>Enrichment-Notizen (nur A/B tief anreichern!)</label><textarea id="f_not"></textarea>
 <p><button class="btn" onclick="saveLead()">Speichern &amp; bewerten</button>
 <button class="btn ghost" onclick="document.getElementById('formCard').style.display='none'">Abbrechen</button></p>
 <p class="mut" id="scoreMsg"></p>
+<div id="aiSec" style="display:none">
+<h4>🤖 KI zum Lead</h4>
+<p><button class="btn" id="b_enrich" onclick="enrichLead()">Mehr Infos finden (Anreicherung)</button>
+<button class="btn ghost" id="b_strat" onclick="strategyLead()">Gewinn-Strategie erstellen</button>
+<span class="mut" id="aiModel"></span></p>
+<div id="aiOut"></div>
+</div>
 </div>
 </section>
 
@@ -114,36 +146,91 @@ pre{background:#0d1320;padding:12px;border-radius:8px;overflow:auto;font-size:12
 <p><b>„Ein Brief kostet mehr als diese Recherche.“</b> → Nur <span class="pill A">A</span>/<span class="pill B">B</span> tief anreichern &amp; anschreiben. <span class="pill C">C</span> ehrlich parken, nie erfinden.</p>
 <p class="mut">Kernsatz: Ein ICP ist erst nützlich, wenn du ihn in Merkmale übersetzt, die du von außen beobachten kannst.</p></div>
 <div class="card"><h3>Personalisierungs-Hooks (aus Top-A-Leads)</h3><div id="hooks"></div></div>
+<div class="card"><h3>🏆 Gewinn-Strategien (KI, pro Lead)</h3><div id="strats"></div></div>
+</section>
+
+<section id="t-set">
+<div class="card"><h3>🔑 OpenRouter API-Key</h3>
+<p class="mut">Key von <b>openrouter.ai/keys</b> → hier speichern. Liegt nur auf dem Server (<span class="mut">config.json, 0600</span>), wird nie vollständig angezeigt oder geloggt. Guthaben/Credits verwaltet OpenRouter.</p>
+<div class="row"><div><label>API-Key (leer lassen = behalten)</label><input id="s_key" type="password" placeholder="sk-or-v1-…" autocomplete="off"></div>
+<div><label>Status</label><div id="s_keystat" style="padding:8px">…</div></div></div>
+<h4>📦 Mein Angebot / Produkt <span class="mut">(Basis für Gewinn-Strategien)</span></h4>
+<textarea id="s_pitch" rows="3" placeholder="z. B. KI-Befähigung für Beratungen: 6-Wochen-Sprint, Festpreis, inkl. Use-Case + Team-Training …"></textarea>
+<p><button class="btn" onclick="saveSettings()">Speichern</button> <span class="mut" id="s_msg"></span></p>
+</div>
+<div class="card"><h3>🤖 Modelle <span class="mut" id="m_count"></span></h3>
+<p><button class="btn ghost" onclick="loadModels(true)">Liste aktualisieren</button>
+<input id="m_filter" placeholder="Filtern …" oninput="renderModels()" style="margin-top:8px"></p>
+<p class="mut" id="m_meta"></p>
+<div id="m_list"></div>
+</div>
 </section>
 </main>
 <script>
 const STAGES=["neu","qualifiziert","angereichert","kontaktiert","termin","kunde","abgelehnt"];
-let EDIT_ID=null, ICP=null;
-function showErr(t){const e=document.getElementById('err');e.style.display='block';e.textContent=t;}
-async function api(m,p,b){const r=await fetch(p,{method:m,headers:{'Content-Type':'application/json'},body:b?JSON.stringify(b):undefined});const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error((j.error||r.status)+' '+(j.trace||''));return j;}
+let EDIT_ID=null, ICP=null, MODELS=[], DEFAULT_MODEL="";
+function showErr(t){const e=document.getElementById('err');e.style.display='block';e.textContent=t;window.scrollTo(0,0);}
+function hideErr(){document.getElementById('err').style.display='none';}
+async function api(m,p,b){const r=await fetch(p,{method:m,headers:{'Content-Type':'application/json'},body:b?JSON.stringify(b):undefined});const j=await r.json().catch(()=>({}));if(!r.ok||j.error)throw new Error((j.error||r.status)+' '+(j.trace||''));return j;}
 document.querySelectorAll('nav button').forEach(x=>x.onclick=()=>{document.querySelectorAll('nav button').forEach(y=>y.classList.remove('active'));x.classList.add('active');document.querySelectorAll('section').forEach(s=>s.classList.remove('active'));document.getElementById('t-'+x.dataset.t).classList.add('active');});
 document.getElementById('fs').innerHTML='<option value="">Alle Stages</option>'+STAGES.map(s=>`<option>${s}</option>`).join('');
 document.getElementById('f_stage').innerHTML=STAGES.map(s=>`<option>${s}</option>`).join('');
-async function init(){try{const ic=await api('GET','/api/icp');ICP=ic.profile;document.getElementById('icpLabel').textContent='ICP: '+(ICP.icp_name||'?')+' v'+(ICP.version||'')+' · '+ (ICP.region||'');
+async function init(){try{const ic=await api('GET','/api/icp');ICP=ic.profile;document.getElementById('icpLabel').textContent='ICP: '+(ICP.icp_name||'?')+' v'+(ICP.version||'')+' · '+(ICP.region||'');
 document.getElementById('icpMeta').textContent=(ICP.zielgruppe||{}).beschreibung+' · '+STAGES.length+' Stages · '+((ICP.signale||[]).length)+' Signale';
 document.getElementById('sigTbl').innerHTML='<table><tr><th>ID</th><th>Signal</th><th>Prio</th><th>Gew.</th><th>Typ</th></tr>'+(ICP.signale||[]).map(s=>`<tr><td><b>${s.id}</b></td><td>${s.name}<br><span class=mut>${s.beschreibung||''}</span></td><td>${s.prioritaet}</td><td>${s.gewicht}</td><td>${s.typ}</td></tr>`).join('')+'</table>';
 document.getElementById('exTbl').innerHTML='<table>'+((ICP.ausschlusskriterien||[]).map(e=>`<tr><td><b>${e.id}</b></td><td>${e.regel}</td></tr>`).join(''))+'</table>';
 document.getElementById('yaml').textContent=ic.yaml||'(kein YAML gefunden)';
 const nf=(ICP.nische_framework_5_fragen||[]);document.getElementById('niche').innerHTML=nf.length?nf.map(n=>`<p><b>${n.id} · ${n.frage}</b><br><span class=mut>Test: ${n.test||''}</span></p>`).join(''):'<p class=mut>Siehe icp/*.yaml — nische_framework_5_fragen.</p>';
-}catch(e){showErr('ICP laden fehlgeschlagen:\n'+e.message);}loadStats();loadLeads();}
-async function loadStats(){try{const s=await api('GET','/api/stats');document.getElementById('kpis').innerHTML=`<div class=kpi><b>${s.total}</b>Leads</div>`+['A','B','C','X'].map(k=>`<div class=kpi><b>${s.by_klasse[k]||0}</b>Klasse ${k}</div>`).join('');
+}catch(e){showErr('ICP laden fehlgeschlagen:\n'+e.message);}
+try{const s=await api('GET','/api/settings');document.getElementById('s_keystat').innerHTML=s.has_key?`<span class="badge ok">Key gespeichert ${s.key_hint}</span>`:`<span class="badge">kein Key</span>`;document.getElementById('s_pitch').value=s.product_pitch||'';DEFAULT_MODEL=s.default_model||'';
+document.getElementById('kiLabel').textContent='· KI: '+(s.has_key?('bereit ('+s.default_model+')'):'kein Key');}catch(e){}
+loadModels(false);loadStats();loadLeads();}
+async function loadModels(force){try{const m=await api(force?'POST':'GET',force?'/api/models/refresh':'/api/models');MODELS=m.models||[];DEFAULT_MODEL=m.default_model||DEFAULT_MODEL;
+document.getElementById('m_count').textContent=`(${MODELS.length} Modelle${m.cached?', Cache':', live'})`;
+document.getElementById('m_meta').textContent='Stand: '+new Date(m.fetched_at*1000).toLocaleString()+' · Standard: '+DEFAULT_MODEL;
+renderModels();fillModelSelects();}catch(e){document.getElementById('m_list').innerHTML='<span class=mut>Modelle laden fehlgeschlagen: '+e.message+'</span>';}}
+function price(p){if(p==="?"||p==null)return "?";const n=parseFloat(p);if(isNaN(n))return p;return "$"+(n*1000000).toFixed(2)+"/M";}
+function renderModels(){const f=(document.getElementById('m_filter').value||'').toLowerCase();const list=MODELS.filter(m=>!f||m.id.toLowerCase().includes(f)||(m.name||'').toLowerCase().includes(f)).slice(0,200);
+document.getElementById('m_list').innerHTML=list.map(m=>`<div class=modelrow><b>${m.id===DEFAULT_MODEL?'✅':'&nbsp;&nbsp;'}</b><div class=mid><b>${m.name}</b><br><span class=mut>${m.id} · Ctx ${(m.context_length||0).toLocaleString()} · ${price(m.price_prompt)} in / ${price(m.price_completion)} out</span></div><button class="btn ghost" onclick="chooseModel('${m.id}')">Wählen</button></div>`).join('')||'<span class=mut>keine Treffer</span>';}
+function fillModelSelects(){document.getElementById('d_model').innerHTML=MODELS.map(m=>`<option value="${m.id}"${m.id===DEFAULT_MODEL?' selected':''}>${m.name}</option>`).join('');}
+async function chooseModel(id){try{await api('POST','/api/settings',{default_model:id});DEFAULT_MODEL=id;document.getElementById('s_msg').textContent='Standard-Modell: '+id;renderModels();loadStats();}catch(e){showErr('Modell speichern fehlgeschlagen:\n'+e.message);}}
+async function saveSettings(){hideErr();const b={};const k=document.getElementById('s_key').value;if(k)b.openrouter_key=k;b.product_pitch=document.getElementById('s_pitch').value;
+try{const s=await api('POST','/api/settings',b);document.getElementById('s_msg').textContent='Gespeichert.';document.getElementById('s_key').value='';document.getElementById('s_keystat').innerHTML=s.has_key?`<span class="badge ok">Key gespeichert ${s.key_hint}</span>`:`<span class="badge">kein Key</span>`;init();}catch(e){showErr('Speichern fehlgeschlagen:\n'+e.message);}}
+async function discover(){hideErr();const btn=document.getElementById('d_btn');btn.disabled=true;btn.innerHTML='<span class=spin>⏳</span> KI sucht … (kann 1–2 Min dauern)';
+try{const r=await api('POST','/api/ai/discover',{nische:document.getElementById('d_nische').value,region:document.getElementById('d_region').value,anzahl:parseInt(document.getElementById('d_anz').value)||10,model:document.getElementById('d_model').value});
+const rows=(r.leads||[]).map((l,i)=>`<tr><td><b>${l.name||'?'}</b><br><span class=mut>${l.stadt||''} · ${l.website||''} · ${l.beratungsart||''}</span><br><span class=mut>${l.warum_relevant||''}</span></td><td>${(l.wahrscheinliche_signale||[]).join(' ')}</td><td><button class="btn ghost" onclick='takeLead(${JSON.stringify(l).replace(/'/g,"&#39;")})'>Übernehmen</button></td></tr>`).join('');
+document.getElementById('d_out').innerHTML=`<p class=mut>Modell: ${r.model} · ${r.hinweis}</p>
+<h4>Suchaufträge zur Verifikation</h4><ul>${(r.suchauftraege||[]).map(s=>`<li>${s}</li>`).join('')}</ul>
+<h4>Kandidaten (${(r.leads||[]).length}) <span class="badge">unverifiziert</span></h4>
+<table><tr><th>Kandidat</th><th>Signale?</th><th></th></tr>${rows}</table>
+<p><button class="btn ghost" onclick='takeAll()'>Alle übernehmen</button></p>`;
+window._disco=r.leads||[];
+}catch(e){showErr('Discovery fehlgeschlagen:\n'+e.message);}btn.disabled=false;btn.textContent='Suchen starten';}
+async function takeLead(l){try{const r=await api('POST','/api/leads',{name:l.name,stadt:l.stadt||'',website:l.website||'',beratungsart:l.beratungsart||'',verified:0,notizen:'KI-Discovery: '+(l.warum_relevant||'')+' | vermutete Signale: '+((l.wahrscheinliche_signale||[]).join(','))});loadLeads();loadStats();alert('Übernommen als #'+r.id+' (unverifiziert, Klasse '+r.klasse+')');}catch(e){showErr('Übernehmen fehlgeschlagen:\n'+e.message);}}
+async function takeAll(){for(const l of (window._disco||[])){await takeLead(l);} }
+async function loadStats(){try{const s=await api('GET','/api/stats');document.getElementById('kpis').innerHTML=`<div class=kpi><b>${s.total}</b>Leads</div>`+['A','B','C','X'].map(k=>`<div class=kpi><b>${s.by_klasse[k]||0}</b>Klasse ${k}</div>`).join('')+`<div class=kpi><b>${s.unverified||0}</b>unverifiziert</div><div class=kpi><b>${s.mit_strategie||0}</b>Strategien</div>`;
 document.getElementById('top').innerHTML=(s.top||[]).map(t=>`<div> <span class="pill ${t.klasse}">${t.klasse} ${t.score}</span> <b>${t.name}</b> <span class=mut>${t.stage}</span></div>`).join('')||'<span class=mut>noch keine Leads</span>';
 document.getElementById('bystage').innerHTML=STAGES.map(st=>`<div>${st}: <b>${s.by_stage[st]||0}</b></div>`).join('');
-const all=await api('GET','/api/leads?klasse=A');document.getElementById('hooks').innerHTML=(all.leads||[]).slice(0,10).map(l=>`<p>🎯 <b>${l.name}</b> — ${l.hook||'<span class=mut>kein Hook</span>'} <span class=mut>(${l.website||''})</span></p>`).join('')||'<span class=mut>noch keine A-Leads</span>';
-const kb=document.getElementById('kanban');const leads=await api('GET','/api/leads');kb.innerHTML=STAGES.map(st=>{const items=(leads.leads||[]).filter(l=>l.stage===st);return `<div class=col><h3>${st} (${items.length})</h3>`+items.map(l=>`<div class=lead onclick="openForm(${l.id})"><span class="pill ${l.klasse}">${l.klasse}</span> <b>${l.name}</b><br><span class=mut>${l.stadt||''} · ${l.score} P</span><br><button class=btn ghost style="padding:2px 8px;margin-top:4px" onclick="event.stopPropagation();moveStage(${l.id},'${st}')">→ weiter</button></div>`).join('')+`</div>`;}).join('');
+document.getElementById('kiLabel').textContent='· KI: '+(s.ki_bereit?('bereit ('+s.default_model+')'):'kein Key');
+const all=await api('GET','/api/leads?klasse=A');document.getElementById('hooks').innerHTML=(all.leads||[]).slice(0,10).map(l=>`<p>🎯 <b>${l.name}</b> — ${l.hook||(l.ai_hooks_json||[]).join('; ')||'<span class=mut>kein Hook</span>'} <span class=mut>(${l.website||''})</span></p>`).join('')||'<span class=mut>noch keine A-Leads</span>';
+const st=await api('GET','/api/leads?strategie=1');document.getElementById('strats').innerHTML=(st.leads||[]).map(l=>{const s2=l.ai_strategy_json||{};return `<div class=aiBox><h4>${l.name} — ${s2.win_wahrscheinlichkeit_prozent||'?'}% <span class="pill ${l.klasse}">${l.klasse}</span></h4><p><b>Kern:</b> ${s2.kern_argument||''}</p><p><b>Kanal:</b> ${s2.kanal_empfehlung||''} · <b>Timing:</b> ${s2.timing_empfehlung||''}</p><p><button class="btn ghost" onclick="openForm(${l.id})">Strategie öffnen</button></p></div>`;}).join('')||'<span class=mut>noch keine Strategien — Lead öffnen → Gewinn-Strategie erstellen</span>';
+const kb=document.getElementById('kanban');const leads=await api('GET','/api/leads');kb.innerHTML=STAGES.map(stg=>{const items=(leads.leads||[]).filter(l=>l.stage===stg);return `<div class=col><h3>${stg} (${items.length})</h3>`+items.map(l=>`<div class=lead onclick="openForm(${l.id})"><span class="pill ${l.klasse}">${l.klasse}</span> ${l.verified?'':'<span class=badge>unverif.</span>'} ${(l.ai_strategy?'🏆':'')}<b>${l.name}</b><br><span class=mut>${l.stadt||''} · ${l.score} P</span><br><button class=btn ghost style="padding:2px 8px;margin-top:4px" onclick="event.stopPropagation();moveStage(${l.id},'${stg}')">→ weiter</button></div>`).join('')+`</div>`;}).join('');
 }catch(e){showErr('Stats fehlgeschlagen:\n'+e.message);}}
 async function loadLeads(){try{const q=document.getElementById('fq').value,k=document.getElementById('fk').value,s=document.getElementById('fs').value;const d=await api('GET',`/api/leads?q=${encodeURIComponent(q)}&klasse=${k}&stage=${s}`);
-document.getElementById('tbl').innerHTML=`<p class=mut>${d.count} Leads (ICP: ${(ICP||{}).icp_name||'?'})</p><table><tr><th>Lead</th><th>MA</th><th>Signale</th><th>Klasse</th><th>Stage</th><th></th></tr>`+d.leads.map(l=>`<tr><td><b>${l.name}</b><br><span class=mut>${l.website||''} · ${l.stadt||''} · ${l.beratungsart||''}</span><br><span class=mut>Hook: ${l.hook||'—'}</span></td><td>${l.mitarbeiter||'?'}</td><td><span class=mut>${[l.s1_job?'S1 ': '',l.s3_partner?'S3 ': '',l.s4_event?'S4 ': '',l.s5_wachstum?'S5 ': ''].join('')||'—'}</span></td><td><span class="pill ${l.klasse}">${l.klasse} ${l.score}</span></td><td>${l.stage}</td><td><button class="btn ghost" onclick="openForm(${l.id})">Öffnen</button> <button class="btn ghost" onclick="delLead(${l.id})">✕</button></td></tr>`).join('')+'</table>';}catch(e){showErr('Leads laden fehlgeschlagen:\n'+e.message);}}
-async function openForm(id){EDIT_ID=id||null;document.getElementById('formCard').style.display='block';document.getElementById('formTitle').textContent=id?('Lead #'+id):'Neuer Lead';document.getElementById('scoreMsg').textContent='';
-if(!id){['f_name','f_website','f_stadt','f_s1t','f_s1d','f_s1u','f_s3d','f_s3dt','f_s4d','f_s4dt','f_s5d','f_ex','f_not'].forEach(x=>document.getElementById(x).value='');document.getElementById('f_mitarbeiter').value=0;window.scrollTo(0,document.body.scrollHeight);return;}
-try{const l=await api('GET','/api/leads/'+id);const S=(x,v)=>document.getElementById(x).value=v||'';S('f_name',l.name);S('f_website',l.website);S('f_stadt',l.stadt);document.getElementById('f_mitarbeiter').value=l.mitarbeiter||0;document.getElementById('f_inh').value=l.inhabergefuehrt?1:0;S('f_bart',l.beratungsart);document.getElementById('f_s1').checked=!!l.s1_job;S('f_s1t',l.s1_titel);S('f_s1d',l.s1_datum);S('f_s1u',l.s1_url);S('f_s2',l.s2_portfolio);document.getElementById('f_s3').checked=!!l.s3_partner;S('f_s3d',l.s3_detail);S('f_s3dt',l.s3_datum);document.getElementById('f_s4').checked=!!l.s4_event;S('f_s4d',l.s4_detail);S('f_s4dt',l.s4_datum);document.getElementById('f_s5').checked=!!l.s5_wachstum;S('f_s5d',l.s5_detail);document.getElementById('f_s6').checked=!!l.s6_timing;document.getElementById('f_s7').checked=!!l.s7_regulierung;S('f_ex',l.excluded_reason);S('f_stage',l.stage);S('f_not',l.notizen);window.scrollTo(0,document.body.scrollHeight);}catch(e){showErr('Lead öffnen fehlgeschlagen:\n'+e.message);}}
-async function saveLead(){const g=x=>document.getElementById(x).value;const c=x=>document.getElementById(x).checked?1:0;const b={name:g('f_name'),website:g('f_website'),stadt:g('f_stadt'),mitarbeiter:parseInt(g('f_mitarbeiter'))||0,inhabergefuehrt:c('f_inh'),beratungsart:g('f_bart'),s1_job:c('f_s1'),s1_titel:g('f_s1t'),s1_datum:g('f_s1d'),s1_url:g('f_s1u'),s2_portfolio:g('f_s2'),s3_partner:c('f_s3'),s3_detail:g('f_s3d'),s3_datum:g('f_s3dt'),s4_event:c('f_s4'),s4_detail:g('f_s4d'),s4_datum:g('f_s4dt'),s5_wachstum:c('f_s5'),s5_detail:g('f_s5d'),s6_timing:c('f_s6'),s7_regulierung:c('f_s7'),excluded_reason:g('f_ex'),stage:g('f_stage'),notizen:g('f_not')};
-try{const r=EDIT_ID?await api('PUT','/api/leads/'+EDIT_ID,b):await api('POST','/api/leads',b);if(r.error)throw new Error(r.error);document.getElementById('scoreMsg').textContent=`Bewertet: Klasse ${r.klasse} · ${r.score} Punkte — ${r.begruendung||''}`;EDIT_ID=r.id;loadLeads();loadStats();}catch(e){showErr('Speichern fehlgeschlagen:\n'+e.message);}}
+document.getElementById('tbl').innerHTML=`<p class=mut>${d.count} Leads (ICP: ${(ICP||{}).icp_name||'?'})</p><table><tr><th>Lead</th><th>MA</th><th>Signale</th><th>Klasse</th><th>Stage</th><th></th></tr>`+d.leads.map(l=>`<tr><td><b>${l.name}</b> ${l.verified?'':'<span class=badge>unverif.</span>'} ${(l.ai_strategy?'🏆':'')}<br><span class=mut>${l.website||''} · ${l.stadt||''} · ${l.beratungsart||''}</span><br><span class=mut>Hook: ${l.hook||'—'}</span></td><td>${l.mitarbeiter||'?'}</td><td><span class=mut>${[l.s1_job?'S1 ': '',l.s3_partner?'S3 ': '',l.s4_event?'S4 ': '',l.s5_wachstum?'S5 ': ''].join('')||'—'}</span></td><td><span class="pill ${l.klasse}">${l.klasse} ${l.score}</span></td><td>${l.stage}</td><td><button class="btn ghost" onclick="openForm(${l.id})">Öffnen</button> <button class="btn ghost" onclick="delLead(${l.id})">✕</button></td></tr>`).join('')+'</table>';}catch(e){showErr('Leads laden fehlgeschlagen:\n'+e.message);}}
+async function openForm(id){EDIT_ID=id||null;document.getElementById('formCard').style.display='block';document.getElementById('formTitle').textContent=id?('Lead #'+id):'Neuer Lead';document.getElementById('scoreMsg').textContent='';document.getElementById('aiOut').innerHTML='';document.getElementById('aiSec').style.display=id?'block':'none';
+if(!id){['f_name','f_website','f_stadt','f_s1t','f_s1d','f_s1u','f_s3d','f_s3dt','f_s4d','f_s4dt','f_s5d','f_ex','f_not'].forEach(x=>document.getElementById(x).value='');document.getElementById('f_mitarbeiter').value=0;document.getElementById('f_ver').checked=true;window.scrollTo(0,document.body.scrollHeight);return;}
+try{const l=await api('GET','/api/leads/'+id);const S=(x,v)=>document.getElementById(x).value=v||'';S('f_name',l.name);S('f_website',l.website);S('f_stadt',l.stadt);document.getElementById('f_mitarbeiter').value=l.mitarbeiter||0;document.getElementById('f_inh').value=l.inhabergefuehrt?1:0;S('f_bart',l.beratungsart);document.getElementById('f_s1').checked=!!l.s1_job;S('f_s1t',l.s1_titel);S('f_s1d',l.s1_datum);S('f_s1u',l.s1_url);S('f_s2',l.s2_portfolio);document.getElementById('f_s3').checked=!!l.s3_partner;S('f_s3d',l.s3_detail);S('f_s3dt',l.s3_datum);document.getElementById('f_s4').checked=!!l.s4_event;S('f_s4d',l.s4_detail);S('f_s4dt',l.s4_datum);document.getElementById('f_s5').checked=!!l.s5_wachstum;S('f_s5d',l.s5_detail);document.getElementById('f_s6').checked=!!l.s6_timing;document.getElementById('f_s7').checked=!!l.s7_regulierung;S('f_ex',l.excluded_reason);S('f_stage',l.stage);S('f_not',l.notizen);document.getElementById('f_ver').checked=!!l.verified;
+document.getElementById('aiModel').textContent=l.ai_model?('Modell: '+l.ai_model):'';
+let h='';if(l.ai_summary)h+=`<div class=aiBox><h4>Anreicherung</h4><p>${l.ai_summary}</p>${(l.ai_hooks_json||[]).map(x=>`<p>🪝 ${x}</p>`).join('')}</div>`;
+const st=l.ai_strategy_json||null;if(st&&st.kern_argument)h+=`<div class=aiBox><h4>🏆 Gewinn-Strategie (${st.win_wahrscheinlichkeit_prozent||'?'}%)</h4><p><b>Kern:</b> ${st.kern_argument||''}</p><p><b>Kanal:</b> ${st.kanal_empfehlung||''}</p><p><b>Timing:</b> ${st.timing_empfehlung||''}</p><p><b>Entwurf:</b><br>${(st.nachrichten_entwurf||'').replace(/\n/g,'<br>')}</p><p><b>Einwände:</b></p><ul>${(st.einwandbehandlung||[]).map(e=>`<li><b>${e.einwand}:</b> ${e.antwort}</li>`).join('')}</ul><p><b>Nächste Schritte:</b></p><ol>${(st.naechste_schritte||[]).map(x=>`<li>${x}</li>`).join('')}</ol><p class=mut>${st.warum_gewinnen||''}</p></div>`;
+document.getElementById('aiOut').innerHTML=h;window.scrollTo(0,document.body.scrollHeight);}catch(e){showErr('Lead öffnen fehlgeschlagen:\n'+e.message);}}
+async function saveLead(){hideErr();const g=x=>document.getElementById(x).value;const c=x=>document.getElementById(x).checked?1:0;const b={name:g('f_name'),website:g('f_website'),stadt:g('f_stadt'),mitarbeiter:parseInt(g('f_mitarbeiter'))||0,inhabergefuehrt:c('f_inh'),beratungsart:g('f_bart'),s1_job:c('f_s1'),s1_titel:g('f_s1t'),s1_datum:g('f_s1d'),s1_url:g('f_s1u'),s2_portfolio:g('f_s2'),s3_partner:c('f_s3'),s3_detail:g('f_s3d'),s3_datum:g('f_s3dt'),s4_event:c('f_s4'),s4_detail:g('f_s4d'),s4_datum:g('f_s4dt'),s5_wachstum:c('f_s5'),s5_detail:g('f_s5d'),s6_timing:c('f_s6'),s7_regulierung:c('f_s7'),excluded_reason:g('f_ex'),stage:g('f_stage'),verified:c('f_ver'),notizen:g('f_not')};
+try{const r=EDIT_ID?await api('PUT','/api/leads/'+EDIT_ID,b):await api('POST','/api/leads',b);if(r.error)throw new Error(r.error);document.getElementById('scoreMsg').textContent=`Bewertet: Klasse ${r.klasse} · ${r.score} Punkte — ${r.begruendung||''}`;EDIT_ID=r.id;document.getElementById('aiSec').style.display='block';loadLeads();loadStats();}catch(e){showErr('Speichern fehlgeschlagen:\n'+e.message);}}
+async function enrichLead(){hideErr();const b=document.getElementById('b_enrich');b.disabled=true;b.innerHTML='<span class=spin>⏳</span> KI recherchiert …';
+try{const r=await api('POST','/api/ai/enrich',{id:EDIT_ID});openForm(EDIT_ID);loadLeads();loadStats();}catch(e){showErr('Anreicherung fehlgeschlagen:\n'+e.message);}b.disabled=false;b.textContent='Mehr Infos finden (Anreicherung)';}
+async function strategyLead(){hideErr();const b=document.getElementById('b_strat');b.disabled=true;b.innerHTML='<span class=spin>⏳</span> KI plant …';
+try{await api('POST','/api/ai/strategy',{id:EDIT_ID});openForm(EDIT_ID);loadLeads();loadStats();}catch(e){showErr('Strategie fehlgeschlagen:\n'+e.message);}b.disabled=false;b.textContent='Gewinn-Strategie erstellen';}
 async function delLead(id){if(!confirm('Lead #'+id+' löschen?'))return;await api('DELETE','/api/leads/'+id);loadLeads();loadStats();}
 async function moveStage(id,cur){const i=STAGES.indexOf(cur);const nx=STAGES[Math.min(i+1,STAGES.length-1)];const l=await api('GET','/api/leads/'+id);l.stage=nx;await api('PUT','/api/leads/'+id,l);loadLeads();loadStats();}
 async function importCSV(){try{const r=await api('POST','/api/import-csv',{csv:document.getElementById('csv').value});document.getElementById('impMsg').textContent=`Importiert: ${r.imported}`+(r.errors&&r.errors.length?(' · Fehler: '+r.errors.slice(0,3).join(' | ')):'');loadLeads();loadStats();}catch(e){showErr('Import fehlgeschlagen:\n'+e.message);}}

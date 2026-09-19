@@ -2,31 +2,39 @@
 """LeadScraper + Sales Team — lokale Lead-Recherche-Engine (nur stdlib).
 
 Architektur (strikt getrennt):
-  Discovery     -> Kandidaten finden (CSV-Import, manuell, Places-Platzhalter).
+  Discovery     -> Kandidaten finden (KI-Discovery via OpenRouter, CSV-Import, manuell).
   Qualification -> anhand ICP-Profil (icp/*.json, Schema icp/SCHEMA.md) A/B/C + Score.
-  Enrichment    -> nur für A/B (Stellen-URL, Event-Datum, Notizen, Hooks).
+  Enrichment    -> Manual (S1-S7) + KI-Anreicherung (Hooks, Recherche-Ansätze).
+  Win-Strategie -> KI erstellt pro Lead einen Gewinn-Plan inkl. Nachrichtenentwurf.
 
-Keine externen Cloud-Dienste, keine pip-Dependencies. SQLite + http.server.
+KI-Provider: OpenRouter (Modelle frei wählbar, Key in Einstellungen).
+Nur stdlib: urllib für OpenRouter-Calls, keine pip-Dependencies. SQLite + http.server.
+Der API-Key liegt in /var/lib/leadscraper/config.json (0600) und wird nie
+vollständig an den Browser gegeben oder geloggt.
 """
 import csv
-import html
 import io
 import json
 import os
-import re
 import sqlite3
+import time
 import traceback
+import urllib.error
 import urllib.parse
+import urllib.request
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 APP_NAME = "leadscraper"
-VERSION = "1.0.0"
+VERSION = "2.0.0"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))          # /opt/leadscraper/app
 APP_ROOT = os.path.dirname(BASE_DIR)                           # /opt/leadscraper
 STATIC_DIR = os.path.join(BASE_DIR, "static")
 PORT = int(os.environ.get("PORT", os.environ.get("WEB_PORT", "8080")))
 DB_PATH = os.environ.get("DB_PATH", "/var/lib/leadscraper/leads.db")
+CONFIG_PATH = os.path.join(os.path.dirname(DB_PATH), "config.json")
+MODELS_CACHE_PATH = os.path.join(os.path.dirname(DB_PATH), "models_cache.json")
+MODELS_TTL = 86400  # 24h
 ICP_FILE = os.environ.get(
     "ICP_FILE",
     os.path.join(APP_ROOT, "icp", "consulting-dach.json"),
@@ -41,6 +49,8 @@ if not os.path.exists(ICP_FILE):
             break
 
 PIPELINE_STAGES = ["neu", "qualifiziert", "angereichert", "kontaktiert", "termin", "kunde", "abgelehnt"]
+DEFAULT_MODEL = "meta-llama/llama-3.3-70b-instruct"
+LEAD_EXTRA_COLS = ["verified", "ai_summary", "ai_hooks", "ai_strategy", "ai_model"]
 
 ICP_CACHE = {"mtime": 0, "data": None, "path": None}
 
@@ -60,8 +70,133 @@ def load_icp(path=ICP_FILE):
     return data
 
 
+# ------------------------- Config (Key niemals loggen!) ----------------------
+def load_config():
+    try:
+        with open(CONFIG_PATH, encoding="utf-8") as f:
+            cfg = json.load(f)
+    except (OSError, ValueError):
+        cfg = {}
+    cfg.setdefault("base_url", "https://openrouter.ai/api/v1")
+    cfg.setdefault("default_model", DEFAULT_MODEL)
+    cfg.setdefault("product_pitch", "")
+    return cfg
+
+
+def save_config(patch):
+    cfg = load_config()
+    if patch.get("openrouter_key"):
+        cfg["openrouter_key"] = str(patch["openrouter_key"]).strip()
+    for k in ("default_model", "base_url", "product_pitch"):
+        if k in patch and patch[k] is not None:
+            cfg[k] = patch[k]
+    os.makedirs(os.path.dirname(CONFIG_PATH) or ".", exist_ok=True)
+    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+        json.dump(cfg, f, ensure_ascii=False)
+    try:
+        os.chmod(CONFIG_PATH, 0o600)
+    except OSError:
+        pass
+    return cfg
+
+
+def mask_key(k):
+    if not k:
+        return ""
+    return "gesetzt (…%s)" % k[-4:] if len(k) > 4 else "gesetzt"
+
+
+# ------------------------- OpenRouter (stdlib) -------------------------------
+def _http_json(url, method="GET", payload=None, headers=None, timeout=60):
+    data = json.dumps(payload).encode("utf-8") if payload is not None else None
+    req = urllib.request.Request(url, data=data, method=method, headers=headers or {})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.loads(r.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", "replace")[:2000]
+        raise RuntimeError("OpenRouter HTTP %s: %s" % (e.code, body))
+    except urllib.error.URLError as e:
+        raise RuntimeError("Netzwerkfehler (%s): %s" % (url, e.reason))
+
+
+def fetch_models(force=False):
+    """Alle verfügbaren OpenRouter-Modelle (öffentlicher Endpunkt, 24h-Cache)."""
+    cache = {}
+    try:
+        with open(MODELS_CACHE_PATH, encoding="utf-8") as f:
+            cache = json.load(f)
+    except (OSError, ValueError):
+        pass
+    fresh = cache and (time.time() - float(cache.get("fetched_at", 0)) < MODELS_TTL)
+    if fresh and not force:
+        cache["cached"] = True
+        return cache
+    cfg = load_config()
+    raw = _http_json(cfg["base_url"].rstrip("/") + "/models", timeout=60)
+    models = []
+    for m in raw.get("data", []):
+        pr = (m.get("pricing") or {})
+        models.append({
+            "id": m.get("id", ""),
+            "name": m.get("name") or m.get("id", ""),
+            "context_length": m.get("context_length") or m.get("context_window", 0),
+            "price_prompt": pr.get("prompt", "?"),
+            "price_completion": pr.get("completion", "?"),
+        })
+    models.sort(key=lambda m: m["id"])
+    out = {"models": models, "count": len(models),
+           "fetched_at": time.time(), "cached": False}
+    try:
+        os.makedirs(os.path.dirname(MODELS_CACHE_PATH) or ".", exist_ok=True)
+        with open(MODELS_CACHE_PATH, "w", encoding="utf-8") as f:
+            json.dump(out, f)
+    except OSError:
+        pass
+    return out
+
+
+def _extract_json(text):
+    t = (text or "").strip()
+    if t.startswith("```"):
+        t = t.strip("`").strip()
+        if "\n" in t:
+            t = t.split("\n", 1)[1]
+    start = t.find("{")
+    end = t.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        raise RuntimeError("KI-Antwort enthielt kein JSON-Objekt: %s" % t[:500])
+    return json.loads(t[start:end + 1])
+
+
+def ai_chat(model, system, user, timeout=150):
+    """Chat-Completion via OpenRouter, Antwort als JSON-Objekt. Key bleibt serverseitig."""
+    cfg = load_config()
+    key = cfg.get("openrouter_key", "")
+    if not key:
+        raise RuntimeError("Kein OpenRouter-API-Key hinterlegt. Bitte unter Einstellungen speichern.")
+    body = {
+        "model": model or cfg.get("default_model", DEFAULT_MODEL),
+        "messages": [{"role": "system", "content": system},
+                     {"role": "user", "content": user}],
+        "response_format": {"type": "json_object"},
+    }
+    headers = {"Authorization": "Bearer " + key,  # nie loggen!
+               "Content-Type": "application/json",
+               "HTTP-Referer": "https://github.com/HatchetMan111/Leads-Scraper",
+               "X-Title": "LeadScraper"}
+    data = _http_json(cfg["base_url"].rstrip("/") + "/chat/completions",
+                      "POST", body, headers, timeout)
+    try:
+        content = data["choices"][0]["message"]["content"]
+        used = data.get("model", body["model"])
+    except (KeyError, IndexError, TypeError):
+        raise RuntimeError("Unerwartete Chat-Antwort: %s" % str(data)[:500])
+    return _extract_json(content), used
+
+
 def db():
-    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+    os.makedirs(os.path.dirname(DB_PATH) or ".", exist_ok=True)
     con = sqlite3.connect(DB_PATH)
     con.row_factory = sqlite3.Row
     con.execute(
@@ -82,6 +217,15 @@ def db():
           created_at TEXT DEFAULT '', updated_at TEXT DEFAULT ''
         )"""
     )
+    # Migration v2.0: KI-Felder + Verifiziert-Flag (idempotent)
+    existing = {r[1] for r in con.execute("PRAGMA table_info(leads)").fetchall()}
+    defaults = {"verified": "1", "ai_summary": "''", "ai_hooks": "''",
+                "ai_strategy": "''", "ai_model": "''"}
+    for col in LEAD_EXTRA_COLS:
+        if col not in existing:
+            typ = "INTEGER DEFAULT 1" if col == "verified" else "TEXT DEFAULT ''"
+            con.execute("ALTER TABLE leads ADD COLUMN %s %s" % (col, typ))
+    con.commit()
     return con
 
 
@@ -177,9 +321,41 @@ def qualify(lead):
     return "C", score, hook, "C — keine individuelle Evidenz (" + (", ".join(kern) if kern else "Kern passt nicht") + "). Ehrliches C > erfundenes A."
 
 
+# ------------------------------ KI-Prompts -----------------------------------
+DISCOVER_SYSTEM = (
+    "Du bist B2B-Lead-Recherche-Assistent für den DACH-Raum. "
+    "Du erfindest keine Fakten als verifiziert: Nenne reale, plausible Firmenkandidaten "
+    "aus deinem Wissen (Stand 2026) und formuliere zusätzlich konkrete Suchaufträge, mit denen "
+    "der Nutzer jeden Vorschlag verifizieren kann. Antworte NUR mit einem JSON-Objekt."
+)
+
+ENRICH_SYSTEM = (
+    "Du bist B2B-Enrichment-Assistent. Du bewertest einen Lead gegen ein ICP-Signalprofil, "
+    "lieferst belastbare Ansprache-Hooks und sagst ehrlich, was noch zu verifizieren ist. "
+    "Erfinde keine URLs, Daten oder Personen. Antworte NUR mit einem JSON-Objekt."
+)
+
+STRATEGY_SYSTEM = (
+    "Du bist Sales-Stratege für erklärungsbedürftige B2B-Dienstleistungen im DACH-Raum. "
+    "Du erstellst pro Lead einen konkreten Gewinn-Plan: ehrliche Win-Chance, Kernargument, "
+    "Kanal, Timing, Nachrichtenentwurf und Einwandbehandlung. Konkret statt Floskeln. "
+    "Antworte NUR mit einem JSON-Objekt."
+)
+
+
+def icp_kurz():
+    icp = load_icp()
+    z = icp.get("zielgruppe", {}) or {}
+    sigs = ", ".join("%s %s" % (s.get("id"), s.get("name")) for s in icp.get("signale", []))
+    return ("ICP %s (%s): %s, %s-%s MA. Signale: %s. Buyer-Pain: %s"
+            % (icp.get("icp_name"), icp.get("region"), z.get("beschreibung"),
+               z.get("mitarbeiter_min"), z.get("mitarbeiter_max"), sigs,
+               (icp.get("buyer_hypothese") or "")[:400]))
+
+
 # ------------------------------ HTTP-Layer ---------------------------------
 class Handler(BaseHTTPRequestHandler):
-    server_version = "LeadScraper/1.0"
+    server_version = "LeadScraper/2.0"
 
     def log_message(self, fmt, *args):  # über stdout/journald
         print(f"{self.address_string()} {fmt % args}")
@@ -223,6 +399,22 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"status": "ok" if ok else "error", "db": detail,
                                    "icp": os.path.basename(ICP_FILE), "version": VERSION},
                                   200 if ok else 500)
+            if p == "/api/settings":
+                cfg = load_config()
+                return self._json({"has_key": bool(cfg.get("openrouter_key")),
+                                   "key_hint": mask_key(cfg.get("openrouter_key", "")),
+                                   "default_model": cfg.get("default_model", DEFAULT_MODEL),
+                                   "base_url": cfg.get("base_url"),
+                                   "product_pitch": cfg.get("product_pitch", "")})
+            if p == "/api/models":
+                try:
+                    m = fetch_models(force=False)
+                    m["default_model"] = load_config().get("default_model", DEFAULT_MODEL)
+                    return self._json(m)
+                except Exception as e:
+                    traceback.print_exc()
+                    return self._json({"error": str(e)[:500],
+                                       "trace": traceback.format_exc()[-3000:]}, 502)
             if p == "/api/icp":
                 icp = load_icp()
                 raw_yaml = ""
@@ -253,10 +445,31 @@ class Handler(BaseHTTPRequestHandler):
             data = self._read_json()
             if p == "/api/leads":
                 return self._json(self._upsert_lead(data))
+            if p == "/api/settings":
+                cfg = save_config(data)
+                return self._json({"saved": True, "has_key": bool(cfg.get("openrouter_key")),
+                                   "key_hint": mask_key(cfg.get("openrouter_key", "")),
+                                   "default_model": cfg.get("default_model", DEFAULT_MODEL),
+                                   "product_pitch": cfg.get("product_pitch", "")})
+            if p == "/api/models/refresh":
+                try:
+                    m = fetch_models(force=True)
+                    m["default_model"] = load_config().get("default_model", DEFAULT_MODEL)
+                    return self._json(m)
+                except Exception as e:
+                    traceback.print_exc()
+                    return self._json({"error": str(e)[:500],
+                                       "trace": traceback.format_exc()[-3000:]}, 502)
             if p == "/api/import-csv":
                 return self._json(self._import_csv(data.get("csv", "")))
             if p == "/api/score-all":
                 return self._json(self._score_all())
+            if p == "/api/ai/discover":
+                return self._json(self._ai_discover(data))
+            if p == "/api/ai/enrich":
+                return self._json(self._ai_enrich(data))
+            if p == "/api/ai/strategy":
+                return self._json(self._ai_strategy(data))
             self._json({"error": "not found"}, 404)
         except Exception:
             traceback.print_exc()
@@ -283,6 +496,129 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             traceback.print_exc()
             self._json({"error": "interner Fehler", "trace": traceback.format_exc()[-4000:]}, 500)
+
+    # --- KI-Endpunkte ---
+    def _ai_discover(self, d):
+        nische = (d.get("nische") or "").strip()
+        if not nische:
+            return {"error": "Bitte Zielgruppen-Beschreibung (Nische) angeben."}
+        try:
+            anzahl = max(1, min(30, int(d.get("anzahl", 10))))
+        except (ValueError, TypeError):
+            anzahl = 10
+        region = (d.get("region") or "DACH").strip()
+        model = (d.get("model") or "").strip() or None
+        user = (
+            "Zielgruppe: %s\nRegion: %s\nAnzahl gewünschter Leads: %d\n\n%s\n\n"
+            "Liefere JSON exakt in dieser Form:\n"
+            '{"leads": [{"name": "...", "stadt": "...", "website": "...", '
+            '"beratungsart": "strategie|it_digital|ops|sonstige", '
+            '"wahrscheinliche_signale": ["S1", ...], "warum_relevant": "..."}], '
+            '"suchauftraege": ["konkrete Google-/Maps-/LinkedIn-Suchanfrage 1", ...]}\n'
+            "Websites nur angeben, wenn du sie sicher kennst, sonst leer lassen."
+            % (nische, region, anzahl, icp_kurz()))
+        try:
+            parsed, used = ai_chat(model, DISCOVER_SYSTEM, user)
+        except Exception as e:
+            traceback.print_exc()
+            return {"error": str(e)[:800], "trace": traceback.format_exc()[-3000:]}
+        leads = parsed.get("leads", [])[:anzahl]
+        return {"leads": leads, "suchauftraege": parsed.get("suchauftraege", []),
+                "model": used, "verified": False,
+                "hinweis": "KI-Kandidaten sind UNVERIFIZIERT — bitte Suchaufträge prüfen, dann übernehmen."}
+
+    def _ai_enrich(self, d):
+        try:
+            lid = int(d.get("id"))
+        except (ValueError, TypeError):
+            return {"error": "Lead-ID fehlt."}
+        con = db()
+        r = con.execute("SELECT * FROM leads WHERE id=?", (lid,)).fetchone()
+        if r is None:
+            con.close()
+            return {"error": "Lead nicht gefunden."}
+        lead = dict(r)
+        model = (d.get("model") or "").strip() or None
+        user = ("Lead: %s\nWebsite: %s\nStadt: %s\nMitarbeiter: %s\nInhabergeführt: %s\n"
+                "Beratungsart: %s\nAktuelle Klasse/Score: %s/%s\nBisherige Notizen: %s\n\n%s\n\n"
+                "Liefere JSON exakt so:\n"
+                '{"zusammenfassung": "...", '
+                '"signal_einschaetzung": [{"signal": "S1", "einschaetzung": "...", "so_verifizieren": "..."}], '
+                '"personalisierungs_hooks": ["..."], '
+                '"empfohlene_recherche": ["..."], "ansprechpartner_hypothese": "..."}'
+                % (lead.get("name"), lead.get("website"), lead.get("stadt"),
+                   lead.get("mitarbeiter"), "ja" if lead.get("inhabergefuehrt") else "unbekannt",
+                   lead.get("beratungsart"), lead.get("klasse"), lead.get("score"),
+                   (lead.get("notizen") or "")[:1000], icp_kurz()))
+        try:
+            parsed, used = ai_chat(model, ENRICH_SYSTEM, user)
+        except Exception as e:
+            con.close()
+            traceback.print_exc()
+            return {"error": str(e)[:800], "trace": traceback.format_exc()[-3000:]}
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        hooks = parsed.get("personalisierungs_hooks", [])
+        con.execute("UPDATE leads SET ai_summary=?, ai_hooks=?, ai_model=?, updated_at=? WHERE id=?",
+                    (parsed.get("zusammenfassung", "")[:4000],
+                     json.dumps(hooks, ensure_ascii=False)[:4000], used, now, lid))
+        if lead.get("stage") in ("neu", "qualifiziert"):
+            con.execute("UPDATE leads SET stage='angereichert' WHERE id=?", (lid,))
+        con.commit()
+        out = dict(con.execute("SELECT * FROM leads WHERE id=?", (lid,)).fetchone())
+        con.close()
+        out["ki_ergebnis"] = parsed
+        return out
+
+    def _ai_strategy(self, d):
+        try:
+            lid = int(d.get("id"))
+        except (ValueError, TypeError):
+            return {"error": "Lead-ID fehlt."}
+        con = db()
+        r = con.execute("SELECT * FROM leads WHERE id=?", (lid,)).fetchone()
+        if r is None:
+            con.close()
+            return {"error": "Lead nicht gefunden."}
+        lead = dict(r)
+        cfg = load_config()
+        pitch = (d.get("product_pitch") or cfg.get("product_pitch") or "").strip()
+        if not pitch:
+            con.close()
+            return {"error": "Bitte zuerst unter Einstellungen dein Angebot/Produkt beschreiben — sonst kann keine Gewinn-Strategie erstellt werden."}
+        model = (d.get("model") or "").strip() or None
+        hooks_txt = ""
+        try:
+            hooks_txt = ", ".join(json.loads(lead.get("ai_hooks") or "[]"))
+        except ValueError:
+            hooks_txt = lead.get("ai_hooks") or ""
+        user = ("Lead: %s (%s, %s MA, Klasse %s/Score %s, Hooks: %s)\n"
+                "Anreicherung: %s\n\nMein Angebot: %s\n\n%s\n\n"
+                "Liefere JSON exakt so:\n"
+                '{"win_wahrscheinlichkeit_prozent": 0-100, "kern_argument": "...", '
+                '"kanal_empfehlung": "Brief|E-Mail|LinkedIn|Anruf + warum", '
+                '"timing_empfehlung": "...", "nachrichten_entwurf": "...", '
+                '"einwandbehandlung": [{"einwand": "...", "antwort": "..."}], '
+                '"naechste_schritte": ["..."], "warum_gewinnen": "..."}'
+                % (lead.get("name"), lead.get("stadt"), lead.get("mitarbeiter"),
+                   lead.get("klasse"), lead.get("score"), hooks_txt[:800],
+                   (lead.get("ai_summary") or "")[:1500], pitch[:2000], icp_kurz()))
+        try:
+            parsed, used = ai_chat(model, STRATEGY_SYSTEM, user)
+        except Exception as e:
+            con.close()
+            traceback.print_exc()
+            return {"error": str(e)[:800], "trace": traceback.format_exc()[-3000:]}
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        con.execute("UPDATE leads SET ai_strategy=?, ai_model=?, updated_at=? WHERE id=?",
+                    (json.dumps(parsed, ensure_ascii=False)[:8000], used, now, lid))
+        con.commit()
+        out = dict(con.execute("SELECT * FROM leads WHERE id=?", (lid,)).fetchone())
+        con.close()
+        try:
+            out["ki_strategie"] = json.loads(out.get("ai_strategy") or "{}")
+        except ValueError:
+            out["ki_strategie"] = {}
+        return out
 
     # --- Handler-Helfer ---
     def _serve_static(self, name, ctype):
@@ -316,6 +652,11 @@ class Handler(BaseHTTPRequestHandler):
         if qs.get("stage", [""])[0] in PIPELINE_STAGES:
             clauses.append("stage=?")
             params.append(qs["stage"][0])
+        if qs.get("verified", [""])[0] in ("0", "1"):
+            clauses.append("verified=?")
+            params.append(int(qs["verified"][0]))
+        if qs.get("strategie", [""])[0] == "1":
+            clauses.append("ai_strategy != ''")
         if qs.get("q", [""])[0]:
             clauses.append("(name LIKE ? OR stadt LIKE ? OR website LIKE ?)")
             like = "%" + qs["q"][0] + "%"
@@ -333,7 +674,13 @@ class Handler(BaseHTTPRequestHandler):
         con.close()
         if r is None:
             return {"error": "not found"}
-        return self._row_to_dict(r)
+        out = self._row_to_dict(r)
+        for k in ("ai_hooks", "ai_strategy"):
+            try:
+                out[k + "_json"] = json.loads(out.get(k) or "null")
+            except ValueError:
+                out[k + "_json"] = None
+        return out
 
     def _upsert_lead(self, d):
         now = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -341,7 +688,7 @@ class Handler(BaseHTTPRequestHandler):
                   "s1_job", "s1_titel", "s1_datum", "s1_url", "s2_portfolio",
                   "s3_partner", "s3_detail", "s3_datum", "s4_event", "s4_detail", "s4_datum",
                   "s5_wachstum", "s5_detail", "s6_timing", "s7_regulierung",
-                  "excluded_reason", "notizen", "stage"]
+                  "excluded_reason", "notizen", "stage", "verified"]
         clean = {}
         for f in fields:
             v = d.get(f, "")
@@ -350,6 +697,10 @@ class Handler(BaseHTTPRequestHandler):
                     v = int(v or 0)
                 except (ValueError, TypeError):
                     v = 0
+            elif f == "verified":
+                v = 0 if str(v).strip() in ("0", "False", "false", "") and v is not True else 1
+                if d.get(f, "KEEP") == "KEEP" and not d.get("id"):
+                    v = 1
             elif f in ("s1_job", "s3_partner", "s4_event", "s5_wachstum",
                        "s6_timing", "s7_regulierung", "inhabergefuehrt"):
                 if v is True or str(v).strip().lower() in ("1", "true", "ja", "yes", "on"):
@@ -368,7 +719,6 @@ class Handler(BaseHTTPRequestHandler):
             clean["stage"] = "neu"
         klasse, score, hook, begr = qualify(clean)
         clean["klasse"], clean["score"], clean["hook"] = klasse, score, hook
-        clean["notizen"] = (clean.get("notizen") or "")
         con = db()
         if d.get("id"):
             clean["updated_at"] = now
@@ -377,6 +727,8 @@ class Handler(BaseHTTPRequestHandler):
                         list(clean.values()) + [klasse, score, hook, now, int(d["id"])])
             lid = int(d["id"])
         else:
+            if "verified" not in d:
+                clean["verified"] = 1
             clean["created_at"], clean["updated_at"] = now, now
             cols = list(clean) + ["klasse", "score", "hook", "created_at", "updated_at"]
             cur = con.execute(f"INSERT INTO leads ({','.join(cols)}) VALUES ({','.join('?'*len(cols))})",
@@ -435,7 +787,9 @@ class Handler(BaseHTTPRequestHandler):
                 "s1_job": 0, "s1_titel": "", "s1_datum": "", "s1_url": "", "s2_portfolio": "unbekannt",
                 "s3_partner": 0, "s3_detail": "", "s3_datum": "", "s4_event": 0, "s4_detail": "",
                 "s4_datum": "", "s5_wachstum": 0, "s5_detail": "", "s6_timing": 0, "s7_regulierung": 0,
-                "excluded_reason": "", "notizen": "", "stage": "neu"}
+                "excluded_reason": "", "notizen": "", "stage": "neu",
+                "verified": int(lead.pop("verified", 1)) if "verified" in lead else 1,
+                "ai_summary": "", "ai_hooks": "", "ai_strategy": "", "ai_model": ""}
         base.update({k: (str(v).strip() if isinstance(v, str) else v) for k, v in lead.items() if v != ""})
         try:
             base["mitarbeiter"] = int(base.get("mitarbeiter") or 0)
@@ -465,10 +819,16 @@ class Handler(BaseHTTPRequestHandler):
         total = con.execute("SELECT COUNT(*) c FROM leads").fetchone()["c"]
         by_klasse = {r["klasse"]: r["c"] for r in con.execute("SELECT klasse, COUNT(*) c FROM leads GROUP BY klasse")}
         by_stage = {r["stage"]: r["c"] for r in con.execute("SELECT stage, COUNT(*) c FROM leads GROUP BY stage")}
+        unverified = con.execute("SELECT COUNT(*) c FROM leads WHERE verified=0").fetchone()["c"]
+        mit_strat = con.execute("SELECT COUNT(*) c FROM leads WHERE ai_strategy != ''").fetchone()["c"]
         top = [dict(r) for r in con.execute("SELECT id,name,klasse,score,stage FROM leads ORDER BY score DESC LIMIT 10")]
         con.close()
+        cfg = load_config()
         return {"total": total, "by_klasse": by_klasse, "by_stage": by_stage,
-                "top": top, "icp": os.path.basename(ICP_FILE), "version": VERSION}
+                "unverified": unverified, "mit_strategie": mit_strat,
+                "top": top, "icp": os.path.basename(ICP_FILE), "version": VERSION,
+                "ki_bereit": bool(cfg.get("openrouter_key")),
+                "default_model": cfg.get("default_model", DEFAULT_MODEL)}
 
 
 def main():
